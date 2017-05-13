@@ -1,11 +1,13 @@
+use std::io;
 use std::fmt::{self, Display};
 use std::convert::From;
 use std::error::Error;
 use yaml::{Hash, Yaml};
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Debug)]
 pub enum EmitError {
         FmtError(fmt::Error),
+        IoError(io::Error),
         BadHashmapKey,
 }
 
@@ -13,6 +15,7 @@ impl Error for EmitError {
     fn description(&self) -> &str {
         match *self {
             EmitError::FmtError(ref err) => err.description(),
+            EmitError::IoError(ref err) => err.description(),
             EmitError::BadHashmapKey => "bad hashmap key",
         }
     }
@@ -22,6 +25,7 @@ impl Display for EmitError {
     fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             EmitError::FmtError(ref err) => Display::fmt(err, formatter),
+            EmitError::IoError(ref err) => Display::fmt(err, formatter),
             EmitError::BadHashmapKey => formatter.write_str("bad hashmap key"),
         }
     }
@@ -32,9 +36,14 @@ impl From<fmt::Error> for EmitError {
         EmitError::FmtError(f)
     }
 }
+impl From<io::Error> for EmitError {
+    fn from(f: io::Error) -> Self {
+        EmitError::IoError(f)
+    }
+}
 
 pub struct YamlEmitter<'a> {
-    writer: &'a mut fmt::Write,
+    writer: &'a mut io::Write,
     best_indent: usize,
 
     level: isize,
@@ -43,8 +52,8 @@ pub struct YamlEmitter<'a> {
 pub type EmitResult = Result<(), EmitError>;
 
 // from serialize::json
-fn escape_str(wr: &mut fmt::Write, v: &str) -> Result<(), fmt::Error> {
-    try!(wr.write_str("\""));
+fn escape_str(wr: &mut io::Write, v: &str) -> Result<(), EmitError> {
+    try!(write!(wr, "\""));
 
     let mut start = 0;
 
@@ -89,30 +98,41 @@ fn escape_str(wr: &mut fmt::Write, v: &str) -> Result<(), fmt::Error> {
         };
 
         if start < i {
-            try!(wr.write_str(&v[start..i]));
+            try!(write!(wr, "{}", &v[start..i]));
         }
 
-        try!(wr.write_str(escaped));
+        try!(write!(wr,"{}", escaped));
 
         start = i + 1;
     }
 
     if start != v.len() {
-        try!(wr.write_str(&v[start..]));
+        try!(write!(wr,"{}", &v[start..]));
     }
 
-    try!(wr.write_str("\""));
+    try!(write!(wr,"\""));
     Ok(())
 }
 
 impl<'a> YamlEmitter<'a> {
-    pub fn new(writer: &'a mut fmt::Write) -> YamlEmitter {
+    pub fn new(writer: &'a mut io::Write) -> YamlEmitter {
         YamlEmitter {
             writer: writer,
             best_indent: 2,
 
             level: -1
         }
+    }
+
+    pub fn dump_all_into_string(docs: &[&Yaml]) -> Result<String, EmitError> {
+        let mut raw: Vec<u8> = Vec::new();
+        {
+          let mut emitter = YamlEmitter::new(&mut raw);
+          for doc in docs {
+            try!(emitter.dump(doc))
+          }
+        }
+        Ok(String::from_utf8_lossy(&raw).into_owned())
     }
 
     pub fn dump(&mut self, doc: &Yaml) -> EmitResult {
@@ -150,7 +170,7 @@ impl<'a> YamlEmitter<'a> {
                     Ok(())
             },
             Yaml::Hash(ref h) => {
-                    try!(self.writer.write_str("{"));
+                    try!(write!(self.writer, "{{"));
                     self.level += 1;
                     for (cnt, (k, v)) in h.iter().enumerate() {
                         if cnt > 0 {
@@ -166,7 +186,7 @@ impl<'a> YamlEmitter<'a> {
                         try!(write!(self.writer, ": "));
                         try!(self.emit_node(v));
                     }
-                    try!(self.writer.write_str("}"));
+                    try!(write!(self.writer, "}}"));
                     self.level -= 1;
                     Ok(())
             },
@@ -189,9 +209,9 @@ impl<'a> YamlEmitter<'a> {
             },
             Yaml::Boolean(v) => {
                 if v {
-                    try!(self.writer.write_str("true"));
+                    try!(write!(self.writer, "true"));
                 } else {
-                    try!(self.writer.write_str("false"));
+                    try!(write!(self.writer, "false"));
                 }
                 Ok(())
             },
@@ -232,7 +252,7 @@ impl<'a> YamlEmitter<'a> {
 
     fn emit_hash(&mut self, h: &Hash) -> EmitResult {
         if h.is_empty() {
-            try!(self.writer.write_str("{}"));
+            try!(write!(self.writer, "{{}}"));
         } else {
             self.level += 1;
             for (cnt, (k, v)) in h.iter().enumerate() {
@@ -345,12 +365,8 @@ a7: 你好
 
         let docs = YamlLoader::load_from_str(&s).unwrap();
         let doc = &docs[0];
-        let mut writer = String::new();
-        {
-            let mut emitter = YamlEmitter::new(&mut writer);
-            emitter.dump(doc).unwrap();
-        }
-        let docs_new = YamlLoader::load_from_str(&s).unwrap();
+        let as_string = YamlEmitter::dump_all_into_string(&[&doc]).unwrap();
+        let docs_new = YamlLoader::load_from_str(&as_string).unwrap();
         let doc_new = &docs_new[0];
 
         assert_eq!(doc, doc_new);
@@ -379,12 +395,8 @@ products:
             "#;
         let docs = YamlLoader::load_from_str(&s).unwrap();
         let doc = &docs[0];
-        let mut writer = String::new();
-        {
-            let mut emitter = YamlEmitter::new(&mut writer);
-            emitter.dump(doc).unwrap();
-        }
-        let docs_new = YamlLoader::load_from_str(&s).unwrap();
+        let as_string = YamlEmitter::dump_all_into_string(&[&doc]).unwrap();
+        let docs_new = YamlLoader::load_from_str(&as_string).unwrap();
         let doc_new = &docs_new[0];
         assert_eq!(doc, doc_new);
     }
@@ -425,13 +437,9 @@ y: string with spaces"#;
 
         let docs = YamlLoader::load_from_str(&s).unwrap();
         let doc = &docs[0];
-        let mut writer = String::new();
-        {
-            let mut emitter = YamlEmitter::new(&mut writer);
-            emitter.dump(doc).unwrap();
-        }
+        let as_string = YamlEmitter::dump_all_into_string(&[&doc]).unwrap();
 
-        assert_eq!(s, writer, "actual:\n\n{}\n", writer);
+        assert_eq!(s, as_string, "actual:\n\n{}\n", as_string);
     }
 
     #[test]
@@ -448,12 +456,8 @@ e:
 
         let docs = YamlLoader::load_from_str(&s).unwrap();
         let doc = &docs[0];
-        let mut writer = String::new();
-        {
-            let mut emitter = YamlEmitter::new(&mut writer);
-            emitter.dump(doc).unwrap();
-        }
+        let as_string = YamlEmitter::dump_all_into_string(&[&doc]).unwrap();
 
-        assert_eq!(s, writer);
+        assert_eq!(s, as_string);
     }
 }

@@ -8,11 +8,8 @@ use std::error::Error;
 
 quickcheck! {
     fn test_check_weird_keys(xs: Vec<String>) -> TestResult {
-        let mut out_str = String::new();
-        {
-            let mut emitter = YamlEmitter::new(&mut out_str);
-            emitter.dump(&Yaml::Array(xs.into_iter().map(Yaml::String).collect())).unwrap();
-        }
+        let doc = Yaml::Array(xs.into_iter().map(Yaml::String).collect());
+        let out_str = YamlEmitter::dump_all_into_string(&[&doc]).unwrap();
         if let Err(err) = YamlLoader::load_from_str(&out_str) {
             return TestResult::error(err.description());
         }

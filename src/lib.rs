@@ -88,13 +88,9 @@ mod tests {
 
         assert_eq!(doc[0]["name"].as_str().unwrap(), "Ogre");
 
-        let mut writer = String::new();
-        {
-            let mut emitter = YamlEmitter::new(&mut writer);
-            emitter.dump(doc).unwrap();
-        }
+        let as_string = YamlEmitter::dump_all_into_string(&[&doc]).unwrap();
 
-        assert!(!writer.is_empty());
+        assert!(!as_string.is_empty());
     }
 
     fn try_fail(s: &str) -> Result<Vec<Yaml>, ScanError> {
